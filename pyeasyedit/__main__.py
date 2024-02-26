@@ -576,12 +576,12 @@ class AboutDialog(QDialog):
         layout = QVBoxLayout()
 
         # Display the image
-        current_dir = os.path.dirname(__file__)
-        print(f"current dir: {current_dir}")
-        image_path = os.path.join(current_dir, 'images', 'easyedit.png')
-        imagePath = os.path.join(os.path.dirname(__file__), image_path)  # Adjust path as needed
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        print(f"current dir: {base_dir}")
+        image_path = os.path.join(base_dir, './images/easyedit.png')
+
         self.imageLabel = QLabel(self)
-        pixmap = QPixmap(imagePath)
+        pixmap = QPixmap(image_path)
         self.imageLabel.setPixmap(pixmap)
         self.imageLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
 

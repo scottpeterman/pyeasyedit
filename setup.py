@@ -1,8 +1,8 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="sshifted",
-    version="0.1.0",
+    name="pyeasyedit",
+    version="0.1.2",
     description="A PyQt6 multi-tabbed editor based on QScintilla",
     long_description=open('README.md').read(),
     long_description_content_type="text/markdown",

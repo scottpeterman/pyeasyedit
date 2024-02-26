@@ -80,4 +80,7 @@ PyEasyEdit is released under the GPLv3 License. See the LICENSE file for more in
 - Special thanks to the PyQt and QScintilla teams for providing the powerful libraries that made this project possible.
 - Learn more about PyQt and Qt at [Riverbank Computing](https://www.riverbankcomputing.com/) and [Qt Group](https://www.qt.io/), respectively.
 
-```
+```python
+# Create a source distribution and a wheel, upload to pypi
+python setup.py sdist bdist_wheel
+twine upload dist/* 

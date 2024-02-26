@@ -603,6 +603,7 @@ def main():
     editorWidget = EditorWidget(filePath=filePath)
     editorWidget.show()
     editorWidget.resize(900, 600)
+    editorWidget.setWindowTitle("PyEasyEdit")
     sys.exit(app.exec())
 
 if __name__ == '__main__':

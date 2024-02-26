@@ -2,6 +2,10 @@
 
 PyEasyEdit is a lightweight, feature-rich text editor built with PyQt6 and QScintilla. Designed to offer a flexible and efficient editing environment, PyEasyEdit supports syntax highlighting for multiple programming languages, file management capabilities, and customizable themes, making it an ideal choice for developers and writers alike.
 
+<div align="center">
+  <img src="https://raw.githubusercontent.com/scottpeterman/pyeasyedit/main/screen-shots/main.png" alt="PyEasyEdit" width="400px"> 
+</div>
+
 ## Features
 
 - **Syntax Highlighting**: Supports syntax coloring for Python, JavaScript, HTML, CSS, and more, making code easier to read and write.
@@ -74,8 +78,6 @@ PyEasyEdit is released under the GPLv3 License. See the LICENSE file for more in
 ## Acknowledgments
 
 - Special thanks to the PyQt and QScintilla teams for providing the powerful libraries that made this project possible.
-- Thanks to all contributors who help improve PyEasyEdit.
+- Learn more about PyQt and Qt at [Riverbank Computing](https://www.riverbankcomputing.com/) and [Qt Group](https://www.qt.io/), respectively.
 
 ```
-
-Remember to replace `https://github.com/yourusername/PyEasyEdit.git` with the actual URL of your GitHub repository. This README provides a basic structure, including sections for features, getting started instructions, usage tips, contributing guidelines, licensing information, and acknowledgments. You might want to add or modify sections based on your project's specifics, such as additional installation steps, detailed usage instructions, screenshots, or a section on how to report bugs.

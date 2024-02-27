@@ -501,6 +501,7 @@ class EditorWidget(QWidget):
             # Check if the file is already open
             for i in range(self.tabWidget.count()):
                 editorWidget = self.tabWidget.widget(i)
+
                 if editorWidget.current_file_path == filePath:
                     self.tabWidget.setCurrentIndex(i)
                     # editorWidget.fileSaved = True
@@ -520,6 +521,18 @@ class EditorWidget(QWidget):
     def loadFileIntoEditor(self, filePath, editorWidget=None):
         if not editorWidget:
             editorWidget = QScintillaEditorWidget(self.defaultFolderPath())
+            # Enable auto-completion
+            editorWidget.editor.setAutoCompletionSource(QsciScintilla.AutoCompletionSource.AcsAll)
+            editorWidget.editor.setAutoCompletionThreshold(1)  # Start autocompletion after 1 character
+
+            # Enable auto-indent
+            editorWidget.editor.setAutoIndent(True)
+
+            # Set indentation width
+            editorWidget.editor.setIndentationWidth(4)
+
+            # Use spaces instead of tabs
+            editorWidget.editor.setIndentationsUseTabs(False)
             editorWidget.editor.setModified(False)
 
             tabIndex = self.tabWidget.addTab(editorWidget, os.path.basename(filePath))

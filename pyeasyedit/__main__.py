@@ -3,9 +3,10 @@ import os
 import traceback
 import winreg as reg
 import jedi
+from PyQt6 import QtCore
 from PyQt6.QtWidgets import QApplication, QTabWidget, QInputDialog, QMenuBar, QLabel, QLineEdit, QPushButton, QDialog, \
     QMenu, QTextBrowser
-from PyQt6.QtCore import Qt, pyqtSignal, QThread, QRunnable, QThreadPool, QObject, pyqtSlot
+from PyQt6.QtCore import Qt, pyqtSignal, QThread, QRunnable, QThreadPool, QObject, pyqtSlot, QTimer
 from PyQt6.QtGui import QAction, QShortcut, QKeySequence, QPixmap
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QMessageBox, QFileDialog
 from PyQt6.Qsci import QsciScintilla
@@ -29,16 +30,15 @@ class SignalEmitter(QObject):
 
 class CompletionWorker(QRunnable, QObject):
     finished = pyqtSignal()
-    completionsFetched = pyqtSignal(object)  # Assuming 'object' is the type of data you're emitting
-    errorOccurred = pyqtSignal(str)
 
-    def __init__(self, editor, code, cursor_pos, environment, signalEmitter):
+
+    def __init__(self, code, cursor_pos, environment, signalEmitter):
         super().__init__()  # Initialize base classes correctly
         self.code = code
         self.cursor_pos = cursor_pos  # cursor_pos is a tuple (line, column)
         self.environment = environment
         self.signalEmitter = signalEmitter
-        self.editor = editor
+        # self.editor = editor
 
     def run(self):
         print("Running CompletionWorker")
@@ -62,7 +62,7 @@ class CompletionWorker(QRunnable, QObject):
             for completion in completions:
                 completion_list.append(completion.name)
             print(f"Emitting completionsFetched signal with {len(completion_list)} items")
-            self.signalEmitter.completionsFetched.emit([completion_list, self.editor])
+            self.signalEmitter.completionsFetched.emit(completion_list)
 
         except Exception as e:
             print(f"Exception occurred: {e}")
@@ -400,6 +400,10 @@ class EditorWidget(QWidget):
         super().__init__(parent)
         self.setupUi()
         self.active_workers = []
+        self.debounceTimer = QTimer()
+        self.debounceTimer.setSingleShot(True)  # Ensures the timer only fires once per start
+        # self.debounceTimer.timeout.connect(self.debouncedHandleCompletionsFetched)
+        self.pendingCompletionResult = None
         if filePath and os.path.isfile(filePath):
             self.newTab(filePath)
 
@@ -556,29 +560,48 @@ class EditorWidget(QWidget):
         cursor_line += 1  # Adjust for Jedi's 1-indexed lines
 
         signalEmitter = SignalEmitter()
-        signalEmitter.completionsFetched.connect(self.handleCompletionsFetched)  # Slot to handle completions
+        signalEmitter.completionsFetched.connect(self.handleCompletionsFetched, type=Qt.ConnectionType.QueuedConnection)  # Slot to handle completions
         signalEmitter.errorOccurred.connect(self.handleErrorOccurred)  # Slot to handle errors
 
         # Initialize the worker with necessary parameters
         worker = CompletionWorker(code=code, cursor_pos=(cursor_line, cursor_column),
-                                  environment=editor.jedi_environment, signalEmitter=signalEmitter, editor=editor)
+                                  environment=editor.jedi_environment, signalEmitter=signalEmitter)
 
-        # self.active_editor = editor
+        self.active_editor = editor
         # Keep a reference to the worker to prevent premature destruction
         self.active_workers.append(worker)
 
         # Start the worker in a separate thread
         QThreadPool.globalInstance().start(worker)
+
     def handleCompletionsFetched(self, result):
+        self.pendingCompletionResult = result  # Store the latest result
+        # self.debounceTimer.start(500)
+
+    def pendingCompletionResult(self, result):
         print("signal works: handleCompletionsFetched")
         # print(result)
-        auto_complete_list = result[0]
-        editor = result[1]
+        auto_complete_list = result
+        editor = self.active_editor
         if result:
             editor.showUserList(1, auto_complete_list)
             editor.autoCompleteFromAll()
             editor.setAutoCompletionThreshold(10)
 
+    # def debouncedHandleCompletionsFetched(self):
+    #     print("Debounced: handleCompletionsFetched")
+    #     if self.pendingCompletionResult:
+    #         result = self.pendingCompletionResult
+    #         auto_complete_list = result
+    #         # editor = result[1]
+    #         editor = self.active_editor
+    #         if result:
+    #             pass
+    #             print(len(auto_complete_list))
+    #             editor.showUserList(1, auto_complete_list)
+    #             editor.autoCompleteFromAll()
+    #             editor.setAutoCompletionThreshold(10)
+    #         self.pendingCompletionResult = None  # Reset pending result
 
     def handleErrorOccurred(self, result):
         print("signal works: handleCompletionsFetched")

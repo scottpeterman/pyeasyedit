@@ -576,6 +576,9 @@ class EditorWidget(QWidget):
         editor = result[1]
         if result:
             editor.showUserList(1, auto_complete_list)
+            editor.autoCompleteFromAll()
+            editor.setAutoCompletionThreshold(10)
+
 
     def handleErrorOccurred(self, result):
         print("signal works: handleCompletionsFetched")

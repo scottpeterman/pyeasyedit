@@ -10,6 +10,7 @@ PyEasyEdit is a lightweight, feature-rich text editor built with PyQt6 and QScin
 
 - **Syntax Highlighting**: Supports syntax coloring for Python, JavaScript, HTML, CSS, and more, making code easier to read and write.
 - **Auto Completion**: Source code auto-completion
+- **Jedi Support**: Auto-completion now includes jedi inspection
 - **Tab to space conversion**: Critical for python
 - **File Management**: Open, edit, and save files with an intuitive interface. Recent files are tracked for quick access.
 - **Search and Replace**: Powerful search and replace functionality to easily modify your documents.

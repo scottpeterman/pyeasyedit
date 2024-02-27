@@ -1,10 +1,11 @@
 import sys
 import os
+import traceback
 import winreg as reg
-
+import jedi
 from PyQt6.QtWidgets import QApplication, QTabWidget, QInputDialog, QMenuBar, QLabel, QLineEdit, QPushButton, QDialog, \
     QMenu, QTextBrowser
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QThread, QRunnable, QThreadPool, QObject, pyqtSlot
 from PyQt6.QtGui import QAction, QShortcut, QKeySequence, QPixmap
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QMessageBox, QFileDialog
 from PyQt6.Qsci import QsciScintilla
@@ -22,9 +23,56 @@ GLOBAL_COLOR_SCHEME = {
     "DoubleQuotedString": "#7bd9db",
 }
 
+class SignalEmitter(QObject):
+    completionsFetched = pyqtSignal(object)  # Use the correct data type for your completions
+    errorOccurred = pyqtSignal(str)
+
+class CompletionWorker(QRunnable, QObject):
+    finished = pyqtSignal()
+    completionsFetched = pyqtSignal(object)  # Assuming 'object' is the type of data you're emitting
+    errorOccurred = pyqtSignal(str)
+
+    def __init__(self, editor, code, cursor_pos, environment, signalEmitter):
+        super().__init__()  # Initialize base classes correctly
+        self.code = code
+        self.cursor_pos = cursor_pos  # cursor_pos is a tuple (line, column)
+        self.environment = environment
+        self.signalEmitter = signalEmitter
+        self.editor = editor
+
+    def run(self):
+        print("Running CompletionWorker")
+        try:
+            print(f"Code: {self.code[:50]}...")  # Print the first 50 chars of code for reference
+            print(f"Cursor position: {self.cursor_pos}")
+            line, column = self.cursor_pos
+            print(f"Initializing Jedi Script with line={line}, column={column}")
+
+            # Note: The Script interface has changed; adapt accordingly
+            script = jedi.Script(code=self.code, environment=self.environment)
+            try:
+                completions = script.complete(line, column)
+                print(f"Fetched {len(completions)} completions")
+            except:
+                return
+
+
+            # completion_list = [completion.name for completion in completions]
+            completion_list = []
+            for completion in completions:
+                completion_list.append(completion.name)
+            print(f"Emitting completionsFetched signal with {len(completion_list)} items")
+            self.signalEmitter.completionsFetched.emit([completion_list, self.editor])
+
+        except Exception as e:
+            print(f"Exception occurred: {e}")
+            print(f"Exception type: {type(e)}")
+            traceback_str = ''.join(traceback.format_tb(e.__traceback__))
+            print(f"Traceback: {traceback_str}")
+            self.errorOccurred.emit(str(e))
 
 def save_recent_files(file_list, max_files=5):
-    # Define the registry path
+# Define the registry path
     registry_path = r"Software\PyDE\RecentFiles"
     try:
         # Open or create the key for writing
@@ -320,6 +368,7 @@ class QScintillaEditorWidget(QWidget):
         return False, None  # Indicate failure
 
 
+
 class HotkeysDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -346,9 +395,11 @@ class HotkeysDialog(QDialog):
         layout.addWidget(closeButton)
 
 class EditorWidget(QWidget):
+
     def __init__(self, filePath=None, parent=None):
         super().__init__(parent)
         self.setupUi()
+        self.active_workers = []
         if filePath and os.path.isfile(filePath):
             self.newTab(filePath)
 
@@ -470,23 +521,76 @@ class EditorWidget(QWidget):
 
     def newTab(self, filePath=None):
         editorWidget = QScintillaEditorWidget(self.defaultFolderPath())
-        # Enable auto-completion
-        editorWidget.editor.setAutoCompletionSource(QsciScintilla.AutoCompletionSource.AcsAll)
-        editorWidget.editor.setAutoCompletionThreshold(1)  # Start autocompletion after 1 character
+        editor = editorWidget.editor
+        # Editor setup (auto-completion, auto-indent, etc.)
+        editor.setAutoCompletionSource(QsciScintilla.AutoCompletionSource.AcsAll)
+        editor.setAutoCompletionThreshold(1)  # Start autocompletion after 1 character
+        editor.setAutoIndent(True)
+        editor.setIndentationWidth(4)
+        editor.setIndentationsUseTabs(False)
+        if filePath and filePath.endswith(".py"):
+            editor.jedi_environment = jedi.create_environment(sys.executable)
+            editor.textChanged.connect(lambda: self.handle_text_changed(editor))
 
-        # Enable auto-indent
-        editorWidget.editor.setAutoIndent(True)
 
-        # Set indentation width
-        editorWidget.editor.setIndentationWidth(4)
-
-        # Use spaces instead of tabs
-        editorWidget.editor.setIndentationsUseTabs(False)
-        editorWidget.fileSaved.connect(self.updateTabText)  # Connect the signal to the slot
         tabIndex = self.tabWidget.addTab(editorWidget, "Untitled")
         self.tabWidget.setCurrentIndex(tabIndex)
         if filePath:
             self.loadFileIntoEditor(filePath, editorWidget)
+
+    def onCompletionsFetched(self, completions, editor):
+        # Convert completions to a list of strings
+        completion_list = [c.text for c in completions]
+
+        # Display the completions if there are any
+        if completion_list:
+            editor.showAutoCompletion(completion_list)
+
+    def handle_text_changed(self, editor):
+        if not hasattr(editor, 'jedi_environment') or editor.jedi_environment is None:
+            print("Jedi environment is not configured.")
+            return  # Jedi not configured
+
+        code = editor.text()
+        cursor_line, cursor_column = editor.getCursorPosition()
+        cursor_line += 1  # Adjust for Jedi's 1-indexed lines
+
+        signalEmitter = SignalEmitter()
+        signalEmitter.completionsFetched.connect(self.handleCompletionsFetched)  # Slot to handle completions
+        signalEmitter.errorOccurred.connect(self.handleErrorOccurred)  # Slot to handle errors
+
+        # Initialize the worker with necessary parameters
+        worker = CompletionWorker(code=code, cursor_pos=(cursor_line, cursor_column),
+                                  environment=editor.jedi_environment, signalEmitter=signalEmitter, editor=editor)
+
+        # self.active_editor = editor
+        # Keep a reference to the worker to prevent premature destruction
+        self.active_workers.append(worker)
+
+        # Start the worker in a separate thread
+        QThreadPool.globalInstance().start(worker)
+    def handleCompletionsFetched(self, result):
+        print("signal works: handleCompletionsFetched")
+        # print(result)
+        auto_complete_list = result[0]
+        editor = result[1]
+        if result:
+            editor.showUserList(1, auto_complete_list)
+
+    def handleErrorOccurred(self, result):
+        print("signal works: handleCompletionsFetched")
+        print(result)
+
+
+    def onWorkerFinished(self, worker):
+        print(f"removing worker")
+        # Remove the worker from active_workers
+        if worker in self.active_workers:
+            self.active_workers.remove(worker)
+
+
+    def onErrorOccurred(self, error):
+        print(f"Error fetching completions: {error}")
 
     def updateTabText(self, filePath):
         editorWidget = self.sender()
@@ -534,6 +638,10 @@ class EditorWidget(QWidget):
             # Use spaces instead of tabs
             editorWidget.editor.setIndentationsUseTabs(False)
             editorWidget.editor.setModified(False)
+            # Check if the file is a Python file and set up Jedi
+            if filePath and filePath.endswith(".py"):
+                editorWidget.editor.jedi_environment = jedi.create_environment(sys.executable)
+                editorWidget.editor.textChanged.connect(lambda: self.handle_text_changed(editorWidget.editor))
 
             tabIndex = self.tabWidget.addTab(editorWidget, os.path.basename(filePath))
             self.tabWidget.setCurrentIndex(tabIndex)

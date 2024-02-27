@@ -4,7 +4,7 @@ import winreg as reg
 
 from PyQt6.QtWidgets import QApplication, QTabWidget, QInputDialog, QMenuBar, QLabel, QLineEdit, QPushButton, QDialog, \
     QMenu, QTextBrowser
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QAction, QShortcut, QKeySequence, QPixmap
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QMessageBox, QFileDialog
 from PyQt6.Qsci import QsciScintilla
@@ -172,6 +172,8 @@ class SearchDialog(QDialog):
             if not self.editor.findFirst(text, False, True, False, True, True):
                 self.label.setText("Text not found.")
 class QScintillaEditorWidget(QWidget):
+    fileSaved = pyqtSignal(str)
+
     def __init__(self, defaultFolderPath, parent=None):
         super().__init__(parent)
         self.defaultFolderPath = defaultFolderPath  # Store the path as an instance attribute
@@ -299,6 +301,8 @@ class QScintillaEditorWidget(QWidget):
                 text = self.editor.text()
                 file.write(text)
                 self.editor.setModified(False)
+                self.fileSaved.emit(filePath)  # Emit the signal with the file path
+
             return True
         except Exception as e:
             QMessageBox.critical(self, "Error Saving File", "An error occurred while saving the file:\n" + str(e))
@@ -316,6 +320,31 @@ class QScintillaEditorWidget(QWidget):
         return False, None  # Indicate failure
 
 
+class HotkeysDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Hotkeys")
+        self.setupUi()
+
+    def setupUi(self):
+        layout = QVBoxLayout(self)
+
+        # Example hotkeys, replace with your application's hotkeys
+        hotkeys = [
+            ("Ctrl+N", "New Tab"),
+            ("Ctrl+S", "Save File"),
+            ("Ctrl+W", "Close Tab"),
+            ("Ctrl+F", "Find"),
+            ("Ctrl+R", "Replace"),
+        ]
+
+        for key, action in hotkeys:
+            layout.addWidget(QLabel(f"{key}: {action}"))
+
+        closeButton = QPushButton("Close")
+        closeButton.clicked.connect(self.close)
+        layout.addWidget(closeButton)
+
 class EditorWidget(QWidget):
     def __init__(self, filePath=None, parent=None):
         super().__init__(parent)
@@ -331,6 +360,9 @@ class EditorWidget(QWidget):
         # File menu
         fileMenu = self.menuBar.addMenu("&File")
         newAction = QAction("&New", self)
+        newAction.setShortcut("Ctrl+N")
+
+
         newAction.triggered.connect(self.newTab)
         fileMenu.addAction(newAction)
 
@@ -350,16 +382,21 @@ class EditorWidget(QWidget):
         fileMenu.addAction(saveAsAction)
 
         closeTabAction = QAction("&Close Tab", self)
+        closeTabAction.setShortcut("Ctrl+W")
+
+
         closeTabAction.triggered.connect(lambda: self.closeTab(self.tabWidget.currentIndex()))
         fileMenu.addAction(closeTabAction)
 
         # Edit menu
         editMenu = self.menuBar.addMenu("&Edit")
-        searchAction = QAction("&Search", self)
+        searchAction = QAction("&Find", self)
+        searchAction.setShortcut("Ctrl+F")
         searchAction.triggered.connect(self.search)
         editMenu.addAction(searchAction)
 
         replaceAction = QAction("&Replace", self)
+        replaceAction.setShortcut("Ctrl+R")
         replaceAction.triggered.connect(self.replace)
         editMenu.addAction(replaceAction)
 
@@ -383,6 +420,9 @@ class EditorWidget(QWidget):
         aboutAction = QAction("&About", self)
         aboutAction.triggered.connect(self.showAboutDialog)
         helpMenu.addAction(aboutAction)
+        hotkeysAction = QAction("&Hotkeys", self)
+        hotkeysAction.triggered.connect(self.showHotkeysDialog)
+        helpMenu.addAction(hotkeysAction)
 
         self.tabWidget = QTabWidget()
         self.tabWidget.setTabsClosable(True)
@@ -412,9 +452,11 @@ class EditorWidget(QWidget):
         closeTabAction = QAction("&Close Tab", self)
         closeTabAction.triggered.connect(lambda: self.closeTab(self.tabWidget.currentIndex()))
         self.addAction(closeTabAction)
-        # file_list = load_recent_files()
         self.populateRecentFilesMenu()
-        # self.setMinimumSize(QSize(800, 600))
+
+    def showHotkeysDialog(self):
+        dialog = HotkeysDialog(self)
+        dialog.exec()
 
     def zoomIn(self):
         current_editor = self.getCurrentEditor()
@@ -428,10 +470,30 @@ class EditorWidget(QWidget):
 
     def newTab(self, filePath=None):
         editorWidget = QScintillaEditorWidget(self.defaultFolderPath())
+        # Enable auto-completion
+        editorWidget.editor.setAutoCompletionSource(QsciScintilla.AutoCompletionSource.AcsAll)
+        editorWidget.editor.setAutoCompletionThreshold(1)  # Start autocompletion after 1 character
+
+        # Enable auto-indent
+        editorWidget.editor.setAutoIndent(True)
+
+        # Set indentation width
+        editorWidget.editor.setIndentationWidth(4)
+
+        # Use spaces instead of tabs
+        editorWidget.editor.setIndentationsUseTabs(False)
+        editorWidget.fileSaved.connect(self.updateTabText)  # Connect the signal to the slot
         tabIndex = self.tabWidget.addTab(editorWidget, "Untitled")
         self.tabWidget.setCurrentIndex(tabIndex)
         if filePath:
             self.loadFileIntoEditor(filePath, editorWidget)
+
+    def updateTabText(self, filePath):
+        editorWidget = self.sender()
+        if editorWidget:
+            index = self.tabWidget.indexOf(editorWidget)
+            if index != -1:
+                self.tabWidget.setTabText(index, os.path.basename(filePath))
 
     def openFile(self):
         filePath, _ = QFileDialog.getOpenFileName(self, "Open File", self.defaultFolderPath(), "All Files (*)")
@@ -441,6 +503,8 @@ class EditorWidget(QWidget):
                 editorWidget = self.tabWidget.widget(i)
                 if editorWidget.current_file_path == filePath:
                     self.tabWidget.setCurrentIndex(i)
+                    # editorWidget.fileSaved = True
+
                     return
             # Load the file into a new tab
             self.loadFileIntoEditor(filePath)
@@ -456,11 +520,15 @@ class EditorWidget(QWidget):
     def loadFileIntoEditor(self, filePath, editorWidget=None):
         if not editorWidget:
             editorWidget = QScintillaEditorWidget(self.defaultFolderPath())
+            editorWidget.editor.setModified(False)
+
             tabIndex = self.tabWidget.addTab(editorWidget, os.path.basename(filePath))
             self.tabWidget.setCurrentIndex(tabIndex)
         with open(filePath, 'r') as file:
             content = file.read()
         editorWidget.editor.setText(content)
+        editorWidget.editor.setModified(False)
+
         editorWidget.current_file_path = filePath
         editorWidget.setLexerForFile(filePath)
         self.tabWidget.setTabText(self.tabWidget.currentIndex(), os.path.basename(filePath))
@@ -500,7 +568,6 @@ class EditorWidget(QWidget):
             action.triggered.connect(lambda checked, path=filePath: self.openFileAtPath(path))
 
     def openFileAtPath(self, filePath):
-        # Your existing code to open a file, refactored if necessary...
         self.loadFileIntoEditor(filePath)
 
     def updateRecentFiles(self, filePath):

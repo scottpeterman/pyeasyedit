@@ -3,7 +3,6 @@ import os
 import traceback
 import winreg as reg
 import jedi
-from PyQt6 import QtCore
 from PyQt6.QtWidgets import QApplication, QTabWidget, QInputDialog, QMenuBar, QLabel, QLineEdit, QPushButton, QDialog, \
     QMenu, QTextBrowser
 from PyQt6.QtCore import Qt, pyqtSignal, QThread, QRunnable, QThreadPool, QObject, pyqtSlot, QTimer
@@ -12,6 +11,19 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QMessageBox, QFileDialog
 from PyQt6.Qsci import QsciScintilla
 
 from pyeasyedit.LexersCustom import *
+
+LEXER_MAP_MENU = {
+    "Python": CustomPythonLexer,
+    "JSON": CustomJSONLexer,
+    "JavaScript": CustomJavaScriptLexer,
+    "YAML": CustomYAMLLexer,
+    "HTML": CustomHTMLLexer,
+    "CSS": CustomCSSLexer,
+    "SQL": CustomSQLLexer,
+    "XML": CustomXMLLexer,
+    "Bash": CustomBashLexer,
+    "Batch": CustomBatchLexer
+}
 
 GLOBAL_COLOR_SCHEME = {
     "Keyword": "#FFC66D",
@@ -242,6 +254,7 @@ class QScintillaEditorWidget(QWidget):
         }
         self.setupUi()
 
+
     def setupUi(self):
         layout = QVBoxLayout()
         self.setLayout(layout)
@@ -264,6 +277,50 @@ class QScintillaEditorWidget(QWidget):
         self.applyTheme()
         self.saveShortcut = QShortcut(QKeySequence("Ctrl+S"), self.editor)
         self.saveShortcut.activated.connect(self.saveFile)
+        self.configureFolding()  # Setup folding for the editor
+
+    def configureFolding(self):
+        # Assuming Python lexer, but you might want to set this dynamically
+        lexer = QsciLexerPython(self.editor)
+        self.editor.setLexer(lexer)
+
+        # Enable folding
+        self.editor.setFolding(QsciScintilla.FoldStyle.BoxedTreeFoldStyle)
+
+        # Set the colors for the fold margin
+        self.editor.setFoldMarginColors(QColor("#99CC66"), QColor("#CCFF99"))
+
+        # Configure the margin for folding symbols
+        self.editor.setMarginType(2, QsciScintilla.MarginType.SymbolMargin)
+        self.editor.setMarginWidth(2, "12")
+        self.editor.setMarginSensitivity(2, True)
+
+        # Define markers using the correct constants from your list of available symbols
+        self.editor.markerDefine(QsciScintilla.MarkerSymbol.BoxedMinus, QsciScintilla.SC_MARKNUM_FOLDEROPEN)
+        self.editor.markerDefine(QsciScintilla.MarkerSymbol.BoxedPlus, QsciScintilla.SC_MARKNUM_FOLDER)
+        self.editor.markerDefine(QsciScintilla.MarkerSymbol.BoxedMinusConnected, QsciScintilla.SC_MARKNUM_FOLDEROPENMID)
+        self.editor.markerDefine(QsciScintilla.MarkerSymbol.BoxedPlusConnected, QsciScintilla.SC_MARKNUM_FOLDEREND)
+        self.editor.markerDefine(QsciScintilla.MarkerSymbol.VerticalLine, QsciScintilla.SC_MARKNUM_FOLDERSUB)
+        self.editor.markerDefine(QsciScintilla.MarkerSymbol.BoxedMinusConnected, QsciScintilla.SC_MARKNUM_FOLDERMIDTAIL)
+        self.editor.markerDefine(QsciScintilla.MarkerSymbol.BoxedPlusConnected, QsciScintilla.SC_MARKNUM_FOLDERTAIL)
+
+        # Connect the fold margin click event to the handler
+        self.editor.marginClicked.connect(self.onMarginClicked)
+        # Set the colors for the margin (where line numbers are displayed)
+        self.editor.setMarginsForegroundColor(QColor("#CCCCCC"))  # Light grey color for text
+        self.editor.setMarginsBackgroundColor(QColor("#333333"))  # Dark grey color for the background
+
+        # Additional settings that you might want to configure for dark mode
+        self.editor.setFoldMarginColors(QColor("#555555"), QColor("#333333"))  # Adjust fold margin colors
+        self.editor.setCaretForegroundColor(QColor("#FFFFFF"))  # Color for the caret
+        self.editor.setCaretLineBackgroundColor(QColor("#555555"))  # Color for the current line highlight
+
+    def onMarginClicked(self, nmargin, nline, modifiers):
+        # Check if the clicked margin is the fold margin (number 2 in this setup)
+        if nmargin == 2:
+            # Toggle the fold state if the clicked line is foldable (has a fold point)
+            if self.editor.foldingAt(nline):
+                self.editor.toggleFold(nline)
 
     def applyTheme(self):
         self.editor.setEolVisibility(False)
@@ -310,6 +367,8 @@ class QScintillaEditorWidget(QWidget):
             # Add other file extensions and their corresponding custom lexers as needed
         }
 
+
+
         # Retrieve the file extension and select the appropriate custom lexer
         extension = os.path.splitext(filePath)[1].lower()
         lexer_class = lexer_map.get(extension)
@@ -322,6 +381,26 @@ class QScintillaEditorWidget(QWidget):
         else:
             # If no custom lexer matches the file extension, set no lexer
             self.editor.setLexer(None)
+
+        # Connect the fold margin click event to the handler
+        self.editor.marginClicked.connect(self.onMarginClicked)
+        # Set the colors for the margin (where line numbers are displayed)
+        self.editor.setMarginsForegroundColor(QColor("#CCCCCC"))  # Light grey color for text
+        self.editor.setMarginsBackgroundColor(QColor("#333333"))  # Dark grey color for the background
+
+        # Additional settings that you might want to configure for dark mode
+        self.editor.setFoldMarginColors(QColor("#555555"), QColor("#333333"))  # Adjust fold margin colors
+        self.editor.setCaretForegroundColor(QColor("#FFFFFF"))  # Color for the caret
+        self.editor.setCaretLineBackgroundColor(QColor("#555555"))  # Color for the current line highlight
+
+        lexer = self.editor.lexer()
+        if lexer:  # Make sure there is a lexer set
+            # Set default text color (foreground)
+            lexer.setDefaultColor(QColor("#CCCCCC"))
+            # Set default paper color (background)
+            lexer.setDefaultPaper(QColor("#2b2b2b"))
+            # Set default font
+            lexer.setDefaultFont(QFont("Consolas", 10))
 
 
     def maybeSave(self):
@@ -471,6 +550,16 @@ class EditorWidget(QWidget):
         zoomOutAction.triggered.connect(self.zoomOut)
         viewMenu.addAction(zoomOutAction)
 
+        # Syntax highlighting submenu
+        syntaxMenu = QMenu("Syntax", self)
+        viewMenu.addMenu(syntaxMenu)
+
+        # Populate the syntax menu with lexer options
+        for name, lexer_class in LEXER_MAP_MENU.items():
+            action = QAction(name, self)
+            action.triggered.connect(lambda checked, lx=lexer_class: self.changeLexer(lx))
+            syntaxMenu.addAction(action)
+
         helpMenu = self.menuBar.addMenu("&Help")
         aboutAction = QAction("&About", self)
         aboutAction.triggered.connect(self.showAboutDialog)
@@ -508,6 +597,14 @@ class EditorWidget(QWidget):
         closeTabAction.triggered.connect(lambda: self.closeTab(self.tabWidget.currentIndex()))
         self.addAction(closeTabAction)
         self.populateRecentFilesMenu()
+
+    def changeLexer(self, lexer_class):
+        current_editor_widget = self.getCurrentEditorWidget()
+        if current_editor_widget:
+            current_editor = current_editor_widget.editor
+            # Set the new lexer
+            lexer = lexer_class(parent=current_editor)
+            current_editor.setLexer(lexer)
 
     def showHotkeysDialog(self):
         dialog = HotkeysDialog(self)
@@ -676,6 +773,7 @@ class EditorWidget(QWidget):
         editorWidget.editor.setText(content)
         editorWidget.editor.setModified(False)
 
+
         editorWidget.current_file_path = filePath
         editorWidget.setLexerForFile(filePath)
         self.tabWidget.setTabText(self.tabWidget.currentIndex(), os.path.basename(filePath))
@@ -730,6 +828,11 @@ class EditorWidget(QWidget):
     def closeTab(self, index):
         editorWidget = self.tabWidget.widget(index)
         if editorWidget and editorWidget.maybeSave():
+            # Consider removing the file path from recent files if necessary
+            recent_files = load_recent_files()
+            if editorWidget.current_file_path in recent_files:
+                # recent_files.remove(editorWidget.current_file_path)
+                save_recent_files(recent_files)
             self.tabWidget.removeTab(index)
 
     def maybeSave(self):

@@ -4,6 +4,8 @@ from PyQt6.Qsci import (
     QsciLexerPython, QsciLexerXML
 )
 from PyQt6.QtGui import QColor, QFont
+import os
+
 
 # Define the global color scheme
 GLOBAL_COLOR_SCHEME = {

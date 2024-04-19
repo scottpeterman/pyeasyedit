@@ -1,3 +1,4 @@
+import json
 import sys
 import os
 import traceback
@@ -6,11 +7,26 @@ import jedi
 from PyQt6.QtWidgets import QApplication, QTabWidget, QInputDialog, QMenuBar, QLabel, QLineEdit, QPushButton, QDialog, \
     QMenu, QTextBrowser
 from PyQt6.QtCore import Qt, pyqtSignal, QThread, QRunnable, QThreadPool, QObject, pyqtSlot, QTimer
-from PyQt6.QtGui import QAction, QShortcut, QKeySequence, QPixmap
+from PyQt6.QtGui import QAction, QShortcut, QKeySequence, QPixmap, QKeyEvent
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QMessageBox, QFileDialog
-from PyQt6.Qsci import QsciScintilla
+from PyQt6.Qsci import QsciScintilla, QsciAPIs
 
 from pyeasyedit.LexersCustom import *
+
+import re
+
+def get_imported_modules(code):
+    """
+    Extracts all imported module names from the given code using regex.
+    """
+    module_names = set()
+    # Regex to find simple imports and from-imports
+    imports = re.findall(r'^\s*import\s+(\S+)|^\s*from\s+(\S+)\s+import', code, re.MULTILINE)
+    for imp in imports:
+        # Add both groups (import and from-import cases)
+        module_names.update([i for i in imp if i])
+    return list(module_names)
+
 
 LEXER_MAP_MENU = {
     "Python": CustomPythonLexer,
@@ -36,109 +52,34 @@ GLOBAL_COLOR_SCHEME = {
     "DoubleQuotedString": "#7bd9db",
 }
 
+def get_config_directory():
+    home = os.path.expanduser("~")  # Gets the user's home directory universally
+    config_directory = os.path.join(home, ".pyeasyedit")
+    if not os.path.exists(config_directory):
+        os.makedirs(config_directory)  # Create the directory if it doesn't exist
+    return config_directory
+
 class SignalEmitter(QObject):
     completionsFetched = pyqtSignal(object)  # Use the correct data type for your completions
     errorOccurred = pyqtSignal(str)
 
-class CompletionWorker(QRunnable, QObject):
-    finished = pyqtSignal()
-
-
-    def __init__(self, code, cursor_pos, environment, signalEmitter):
-        super().__init__()  # Initialize base classes correctly
-        self.code = code
-        self.cursor_pos = cursor_pos  # cursor_pos is a tuple (line, column)
-        self.environment = environment
-        self.signalEmitter = signalEmitter
-        # self.editor = editor
-
-    def run(self):
-        print("Running CompletionWorker")
-        try:
-            print(f"Code: {self.code[:50]}...")  # Print the first 50 chars of code for reference
-            print(f"Cursor position: {self.cursor_pos}")
-            line, column = self.cursor_pos
-            print(f"Initializing Jedi Script with line={line}, column={column}")
-
-            # Note: The Script interface has changed; adapt accordingly
-            script = jedi.Script(code=self.code, environment=self.environment)
-            try:
-                completions = script.complete(line, column)
-                print(f"Fetched {len(completions)} completions")
-            except:
-                return
-
-
-            # completion_list = [completion.name for completion in completions]
-            completion_list = []
-            for completion in completions:
-                completion_list.append(completion.name)
-            print(f"Emitting completionsFetched signal with {len(completion_list)} items")
-            self.signalEmitter.completionsFetched.emit(completion_list)
-
-        except Exception as e:
-            print(f"Exception occurred: {e}")
-            print(f"Exception type: {type(e)}")
-            traceback_str = ''.join(traceback.format_tb(e.__traceback__))
-            print(f"Traceback: {traceback_str}")
-            self.errorOccurred.emit(str(e))
 
 def save_recent_files(file_list, max_files=5):
-# Define the registry path
-    registry_path = r"Software\PyDE\RecentFiles"
-    try:
-        # Open or create the key for writing
-        key = reg.CreateKey(reg.HKEY_CURRENT_USER, registry_path)
-
-        # Clear existing values
-        clear_recent_files(registry_path)
-
-        # Save the most recent 'max_files' entries
-        for i, file_path in enumerate(file_list[:max_files]):
-            reg.SetValueEx(key, f"File{i}", 0, reg.REG_SZ, file_path)
-
-        reg.CloseKey(key)
-    except Exception as e:
-        print(f"Error saving recent files: {e}")
-
-
-def clear_recent_files(registry_path):
-    try:
-        key = reg.OpenKey(reg.HKEY_CURRENT_USER, registry_path, 0, reg.KEY_ALL_ACCESS)
-        i = 0
-        while True:
-            try:
-                # Enumerate the next subkey
-                name, value, type = reg.EnumValue(key, 0)
-                reg.DeleteValue(key, name)
-            except WindowsError:
-                # A WindowsError exception means we've enumerated all values
-                break  # Exit the loop
-        reg.CloseKey(key)
-    except Exception as e:
-        print(f"Error clearing recent files: {e}")
+    config_directory = get_config_directory()
+    config_path = os.path.join(config_directory, "config.json")
+    data = {"recent_files": file_list[:max_files]}  # Store only the most recent entries
+    with open(config_path, "w") as config_file:
+        json.dump(data, config_file)
 
 
 def load_recent_files():
-    # Define the registry path
-    registry_path = r"Software\PyDE\RecentFiles"
+    config_directory = get_config_directory()
+    config_path = os.path.join(config_directory, "config.json")
     try:
-        # Open the key for reading
-        key = reg.OpenKey(reg.HKEY_CURRENT_USER, registry_path, 0, reg.KEY_READ)
-        file_list = []
-        i = 0
-        while True:
-            try:
-                # Read each value
-                name, value, _ = reg.EnumValue(key, i)
-                file_list.append(value)
-                i += 1
-            except WindowsError:  # End of values
-                break
-        reg.CloseKey(key)
-        return file_list
-    except Exception as e:
-        print(f"Error loading recent files: {e}")
+        with open(config_path, "r") as config_file:
+            data = json.load(config_file)
+        return data.get("recent_files", [])
+    except FileNotFoundError:
         return []
 
 
@@ -231,8 +172,129 @@ class SearchDialog(QDialog):
             self.editor.SendScintilla(self.editor.SCI_DOCUMENTSTART)
             if not self.editor.findFirst(text, False, True, False, True, True):
                 self.label.setText("Text not found.")
+
+class CustomQsciScintilla(QsciScintilla):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.currentListItem = ""
+        self.currentListIndex = -1  # Default to -1 indicating no selection
+        self.userListActivated.connect(self.onUserListActivated)
+
+
+
+    def onUserListActivated(self, index, text):
+        self.currentListItem = text
+        self.currentListIndex = index
+        print(f"List Activated: {text} at index {index}")
+
+
+    def keyPressEvent(self, event: QKeyEvent):
+        try:
+            if self.isListActive():  # Assuming isListActive() checks if the autocomplete list is visible
+                if (event.key() == Qt.Key.Key_Tab) or (event.key() == Qt.Key.Key_Return):
+                    current_selection = self.currentListItem  # Use built-in function directly
+                    print(f"current selection: {current_selection}")
+                    if current_selection:
+                        self.insert(current_selection)  # Insert the selected text into the editor at the cursor
+                        self.SendScintilla(self.SCI_CANCEL)  # Cancel the list
+                        # Move cursor to the end of the inserted text
+                        new_line, new_index = self.getCursorPosition()
+                        self.setCursorPosition(new_line, new_index + len(current_selection))
+                        print(f"Inserted '{current_selection}' from list.")
+                        event.accept()
+                        return
+        except Exception as e:
+            print(f"Key press event error: {e}")
+        super().keyPressEvent(event)
+
+        if event.text() == '.':
+            print("Dot pressed, fetching completions...")
+            code = self.text()
+            cursor_line, cursor_column = self.getCursorPosition()
+            cursor_line += 1  # Adjust for Jedi's 1-indexed lines
+            try:
+                script = jedi.Script(code=code, path=self.AContainer.filePath, environment=self.jedi_environment)
+                completions = script.complete(line=cursor_line, column=cursor_column)
+                completion_words = [comp.name for comp in completions]
+                self.AContainer.itemList = completion_words
+                # print(f"Completion words: {completion_words}")  # Debug print
+                self.showUserList(1, self.AContainer.itemList)
+            except Exception as e:
+                print(f"Error fetching completions: {e}")
+
+
+# class CustomQsciScintilla(QsciScintilla):
+#     def __init__(self, parent=None):
+#         super().__init__(parent)
+#         self.currentListItem = ""
+#
+#
+#     def onUserListActivated(self, index, text):
+#         """
+#         Slot that updates the current list item when an item in the user list is activated.
+#         """
+#         self.currentListItem = text
+#
+#     def getCurrentListItem(self):
+#         """
+#         Return the currently selected item in the user list.
+#         """
+#         return self.currentListItem
+#
+#     def keyPressEvent(self, event: QKeyEvent):
+#         try:
+#             if self.isListActive():  # Assuming isListActive() checks if the autocomplete list is visible
+#                 if event.key() in (Qt.Key.Key_Enter, Qt.Key.Key_Return, Qt.Key.Key_Tab):
+#                     # Get the currently selected item from the completion list
+#                     current_selection = self.getCurrentListItem()  # Implement this method to get the current selection
+#                     if current_selection:
+#                         self.insert(current_selection)  # Insert the selected text into the editor at the cursor
+#                         # self.hideUserList()  # Hide the completion list
+#                         event.accept()  # Consume the event to prevent further processing
+#                         return
+#         except Exception as e:
+#             print(e)
+#             # Default handling if not processing Tab or Enter for autocomplete
+#         super().keyPressEvent(event)
+#
+#         if event.text() == '.':
+#             print("Dot pressed, fetching completions...")
+#
+#             # Get current code from the editor and cursor position
+#             code = self.text()
+#             cursor_line, cursor_column = self.getCursorPosition()
+#             cursor_line += 1  # Adjust for Jedi's 1-indexed lines
+#
+#             # Check if Jedi environment is configured properly
+#             if not hasattr(self, 'jedi_environment') or self.jedi_environment is None:
+#                 print("Jedi environment is not configured.")
+#                 return  # Early exit if Jedi not configured
+#
+#             # Using Jedi to get completions at the current cursor position
+#             try:
+#                 script = jedi.Script(code=code, path=self.AContainer.filePath, environment=self.jedi_environment)
+#                 completions = script.complete(line=cursor_line, column=cursor_column)
+#                 completion_words = [comp.name for comp in completions]
+#                 print(f"Completion words: {completion_words}")
+#
+#                 # Update the editor's completion list directly
+#                 self.AContainer.itemList = completion_words
+#
+#                 # Print items for debugging purposes
+#                 for item in self.AContainer.itemList:
+#                     print(item)
+#
+#                 # Show completion list to the user
+#                 self.showUserList(1, self.AContainer.itemList)
+#
+#             except Exception as e:
+#                 print(f"An error occurred while fetching completions: {e}")
+
+
 class QScintillaEditorWidget(QWidget):
     fileSaved = pyqtSignal(str)
+    showUserListSignal = pyqtSignal(int, list)  # Define a signal
+
 
     def __init__(self, defaultFolderPath, parent=None):
         super().__init__(parent)
@@ -252,7 +314,38 @@ class QScintillaEditorWidget(QWidget):
             "unmatched_brace_fg": "#e7f20f"
             # Add or adjust theme settings as necessary
         }
+        self.itemList = []
         self.setupUi()
+        self.showUserListSignal.connect(self.showUserList)  # Connect signal to slot
+
+    def showUserList(self):
+        print("Attempting to show user list...")
+        itemList = self.itemList
+        if self.editor:
+            lexer = self.editor.lexer()
+            if lexer:
+                print(f"Using lexer: {str(lexer)}")
+                api = QsciAPIs(lexer)
+                api.clear()
+                for word in itemList:
+                    api.add(word)
+                api.prepare()
+                self.editor.setAutoCompletionSource(QsciScintilla.AutoCompletionSource.AcsAPIs)
+
+            # Set auto-completion settings to always show the list
+            self.editor.setAutoCompletionUseSingle(
+                QsciScintilla.AutoCompletionUseSingle.AcusNever)  # Important change here
+            self.editor.setAutoCompletionCaseSensitivity(True)
+            self.editor.setAutoCompletionReplaceWord(True)
+            self.editor.setAutoCompletionThreshold(1)  # Adjust if needed
+            self.editor.setAutoCompletionWordSeparators(['.'])  # Trigger on dot
+
+            # if self.editor.isListActive():
+            #     print("List is already active, canceling...")
+            #     self.editor.cancelList()
+
+            print("Auto-completion list prepared and should appear based on threshold settings.")
+
 
 
     def setupUi(self):
@@ -260,7 +353,7 @@ class QScintillaEditorWidget(QWidget):
         self.setLayout(layout)
 
         # Initialize the QScintilla editor
-        self.editor = QsciScintilla()
+        self.editor = CustomQsciScintilla()
         layout.addWidget(self.editor)
 
         # lexer = PythonLexer()
@@ -278,6 +371,15 @@ class QScintillaEditorWidget(QWidget):
         self.saveShortcut = QShortcut(QKeySequence("Ctrl+S"), self.editor)
         self.saveShortcut.activated.connect(self.saveFile)
         self.configureFolding()  # Setup folding for the editor
+        self.completionShortcut = QShortcut(QKeySequence('Ctrl+Space'), self.editor)
+        self.completionShortcut.activated.connect(self.triggerCompletion)
+
+    def triggerCompletion(self):
+        # if not self.editor.isListActive():
+        print("trigger here")
+        for item in self.itemList:
+            print(item)
+        self.editor.showUserList(1, self.itemList)
 
     def configureFolding(self):
         # Assuming Python lexer, but you might want to set this dynamically
@@ -623,6 +725,7 @@ class EditorWidget(QWidget):
     def newTab(self, filePath=None):
         editorWidget = QScintillaEditorWidget(self.defaultFolderPath())
         editor = editorWidget.editor
+        editor.AContainer = editorWidget
         # Editor setup (auto-completion, auto-indent, etc.)
         editor.setAutoCompletionSource(QsciScintilla.AutoCompletionSource.AcsAll)
         editor.setAutoCompletionThreshold(1)  # Start autocompletion after 1 character
@@ -648,42 +751,79 @@ class EditorWidget(QWidget):
             editor.showAutoCompletion(completion_list)
 
     def handle_text_changed(self, editor):
+        # Check if the Jedi environment is configured
         if not hasattr(editor, 'jedi_environment') or editor.jedi_environment is None:
             print("Jedi environment is not configured.")
-            return  # Jedi not configured
+            return  # Early exit if Jedi not configured
 
+        # Retrieve code and cursor position from the editor
         code = editor.text()
         cursor_line, cursor_column = editor.getCursorPosition()
         cursor_line += 1  # Adjust for Jedi's 1-indexed lines
 
-        signalEmitter = SignalEmitter()
-        signalEmitter.completionsFetched.connect(self.handleCompletionsFetched, type=Qt.ConnectionType.QueuedConnection)  # Slot to handle completions
-        signalEmitter.errorOccurred.connect(self.handleErrorOccurred)  # Slot to handle errors
+        # Identify modules to preload based on current imports in the file
+        preload_list = get_imported_modules(code)
 
-        # Initialize the worker with necessary parameters
-        worker = CompletionWorker(code=code, cursor_pos=(cursor_line, cursor_column),
-                                  environment=editor.jedi_environment, signalEmitter=signalEmitter)
+        # Preloading modules using jedi.preload_module
+        for module in preload_list:
+            try:
+                jedi.preload_module(module)
+            except Exception as e:
+                print(f"Error preloading module {module}: {e}")
 
-        self.active_editor = editor
-        # Keep a reference to the worker to prevent premature destruction
-        self.active_workers.append(worker)
+        # Using Jedi to get completions directly
+        try:
+            script = jedi.Script(
+                code=code, path=editor.AContainer.filePath,
+                environment=editor.jedi_environment
+            )
+            completions = script.complete(line=cursor_line, column=cursor_column)
+            completion_words = [comp.name for comp in completions]
 
-        # Start the worker in a separate thread
-        QThreadPool.globalInstance().start(worker)
+            editor.AContainer.itemList = completion_words  # Update editor completion list
+
+        except Exception as e:
+            print(f"An error occurred while fetching completions: {e}")
+    # def handle_text_changed(self, editor):
+    #     # Check if the Jedi environment is configured
+    #     if not hasattr(editor, 'jedi_environment') or editor.jedi_environment is None:
+    #         print("Jedi environment is not configured.")
+    #         return  # Early exit if Jedi not configured
+    #
+    #     # Retrieve code and cursor position from the editor
+    #     code = editor.text()
+    #     cursor_line, cursor_column = editor.getCursorPosition()
+    #     cursor_line += 1  # Adjust for Jedi's 1-indexed lines
+    #
+    #     # Create an instance of SignalEmitter (handles emitting of completion and error signals)
+    #     signalEmitter = SignalEmitter()
+    #     # Connect fetched completions to handleCompletionsFetched via a queued connection to ensure thread safety
+    #     signalEmitter.completionsFetched.connect(self.handleCompletionsFetched, type=Qt.ConnectionType.QueuedConnection)
+    #     # Connect errors to handleErrorOccurred similarly
+    #     signalEmitter.errorOccurred.connect(self.handleErrorOccurred)
+    #
+    #     # Prepare the completion worker with necessary data
+    #     worker = CompletionWorker(code=code, cursor_pos=(cursor_line, cursor_column),
+    #                               environment=editor.jedi_environment, signalEmitter=signalEmitter)
+    #
+    #     # Set the current editor as active editor
+    #     self.active_editor = editor
+    #     # Keep a reference to the worker to avoid it being garbage collected
+    #     self.active_workers.append(worker)
+    #     # Start the worker in a separate thread for asynchronous operation
+    #     QThreadPool.globalInstance().start(worker)
 
     def handleCompletionsFetched(self, result):
-        self.pendingCompletionResult = result  # Store the latest result
-        # self.debounceTimer.start(500)
-
-    def pendingCompletionResult(self, result):
-        print("signal works: handleCompletionsFetched")
-        # print(result)
-        auto_complete_list = result
+        self.completionResult = result  # Corrected attribute name for storing the result
+        print("handleCompletionsFetched")
         editor = self.active_editor
-        if result:
-            editor.showUserList(1, auto_complete_list)
-            editor.autoCompleteFromAll()
-            editor.setAutoCompletionThreshold(10)
+        if not editor:
+            print("Editor is not initialized!")
+            return
+        editor.AContainer.showUserListSignal.emit(1, result)  # Use the correct userListId if needed
+
+        # self.processCompletionResult(result)  # Directly call the processing method
+
 
     # def debouncedHandleCompletionsFetched(self):
     #     print("Debounced: handleCompletionsFetched")
@@ -748,6 +888,8 @@ class EditorWidget(QWidget):
     def loadFileIntoEditor(self, filePath, editorWidget=None):
         if not editorWidget:
             editorWidget = QScintillaEditorWidget(self.defaultFolderPath())
+            #backlink
+            editorWidget.editor.AContainer = editorWidget
             # Enable auto-completion
             editorWidget.editor.setAutoCompletionSource(QsciScintilla.AutoCompletionSource.AcsAll)
             editorWidget.editor.setAutoCompletionThreshold(1)  # Start autocompletion after 1 character
@@ -757,7 +899,7 @@ class EditorWidget(QWidget):
 
             # Set indentation width
             editorWidget.editor.setIndentationWidth(4)
-
+            editorWidget.filePath = filePath
             # Use spaces instead of tabs
             editorWidget.editor.setIndentationsUseTabs(False)
             editorWidget.editor.setModified(False)
@@ -776,6 +918,7 @@ class EditorWidget(QWidget):
 
         editorWidget.current_file_path = filePath
         editorWidget.setLexerForFile(filePath)
+        self.handle_text_changed(editorWidget.editor)
         self.tabWidget.setTabText(self.tabWidget.currentIndex(), os.path.basename(filePath))
 
     def saveFile(self):
@@ -821,7 +964,7 @@ class EditorWidget(QWidget):
             recent_files.remove(filePath)
         recent_files.insert(0, filePath)
         # Trim the list to the last N files, e.g., 5
-        recent_files = recent_files[:5]
+        recent_files = recent_files[:10]
         save_recent_files(recent_files)
         self.populateRecentFilesMenu()
 

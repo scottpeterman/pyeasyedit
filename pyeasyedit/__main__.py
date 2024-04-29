@@ -1,8 +1,4 @@
-import json
 import sys
-import os
-import traceback
-import winreg as reg
 import jedi
 from PyQt6.QtWidgets import QApplication, QTabWidget, QInputDialog, QMenuBar, QLabel, QLineEdit, QPushButton, QDialog, \
     QMenu, QTextBrowser
@@ -10,168 +6,10 @@ from PyQt6.QtCore import Qt, pyqtSignal, QThread, QRunnable, QThreadPool, QObjec
 from PyQt6.QtGui import QAction, QShortcut, QKeySequence, QPixmap, QKeyEvent
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QMessageBox, QFileDialog
 from PyQt6.Qsci import QsciScintilla, QsciAPIs
-
 from pyeasyedit.LexersCustom import *
+from pyeasylib import AboutDialog, get_config_directory, get_imported_modules, LEXER_MAP_MENU, load_recent_files, \
+    save_recent_files, HotkeysDialog, SearchDialog, ReplaceDialog
 
-import re
-
-def get_imported_modules(code):
-    """
-    Extracts all imported module names from the given code using regex.
-    """
-    module_names = set()
-    # Regex to find simple imports and from-imports
-    imports = re.findall(r'^\s*import\s+(\S+)|^\s*from\s+(\S+)\s+import', code, re.MULTILINE)
-    for imp in imports:
-        # Add both groups (import and from-import cases)
-        module_names.update([i for i in imp if i])
-    return list(module_names)
-
-
-LEXER_MAP_MENU = {
-    "Python": CustomPythonLexer,
-    "JSON": CustomJSONLexer,
-    "JavaScript": CustomJavaScriptLexer,
-    "YAML": CustomYAMLLexer,
-    "HTML": CustomHTMLLexer,
-    "CSS": CustomCSSLexer,
-    "SQL": CustomSQLLexer,
-    "XML": CustomXMLLexer,
-    "Bash": CustomBashLexer,
-    "Batch": CustomBatchLexer
-}
-
-GLOBAL_COLOR_SCHEME = {
-    "Keyword": "#FFC66D",
-    "Comment": "#367d36",
-    "ClassName": "#FFEEAD",
-    "FunctionMethodName": "#be6ff2",
-    "TripleSingleQuotedString": "#7bd9db",
-    "TripleDoubleQuotedString": "#7bd9db",
-    "SingleQuotedString": "#7bd9db",
-    "DoubleQuotedString": "#7bd9db",
-}
-
-def get_config_directory():
-    home = os.path.expanduser("~")  # Gets the user's home directory universally
-    config_directory = os.path.join(home, ".pyeasyedit")
-    if not os.path.exists(config_directory):
-        os.makedirs(config_directory)  # Create the directory if it doesn't exist
-    return config_directory
-
-class SignalEmitter(QObject):
-    completionsFetched = pyqtSignal(object)  # Use the correct data type for your completions
-    errorOccurred = pyqtSignal(str)
-
-
-def save_recent_files(file_list, max_files=5):
-    config_directory = get_config_directory()
-    config_path = os.path.join(config_directory, "config.json")
-    data = {"recent_files": file_list[:max_files]}  # Store only the most recent entries
-    with open(config_path, "w") as config_file:
-        json.dump(data, config_file)
-
-
-def load_recent_files():
-    config_directory = get_config_directory()
-    config_path = os.path.join(config_directory, "config.json")
-    try:
-        with open(config_path, "r") as config_file:
-            data = json.load(config_file)
-        return data.get("recent_files", [])
-    except FileNotFoundError:
-        return []
-
-
-class ReplaceDialog(QDialog):
-    def __init__(self, editor, parent=None):
-        super().__init__(parent)
-        self.editor = editor  # Reference to the QsciScintilla editor
-        self.initUI()
-
-    def initUI(self):
-        self.setWindowTitle("Replace")
-        layout = QVBoxLayout(self)
-
-        # Find text label and field
-        self.findLabel = QLabel("Find what:", self)
-        layout.addWidget(self.findLabel)
-
-        self.findField = QLineEdit(self)
-        layout.addWidget(self.findField)
-
-        # Replace text label and field
-        self.replaceLabel = QLabel("Replace with:", self)
-        layout.addWidget(self.replaceLabel)
-
-        self.replaceField = QLineEdit(self)
-        layout.addWidget(self.replaceField)
-
-        # Find and Replace buttons
-        self.findButton = QPushButton("Find Next", self)
-        self.findButton.clicked.connect(self.findNext)
-        layout.addWidget(self.findButton)
-
-        self.replaceButton = QPushButton("Replace", self)
-        self.replaceButton.clicked.connect(self.replace)
-        layout.addWidget(self.replaceButton)
-
-        self.replaceAllButton = QPushButton("Replace All", self)
-        self.replaceAllButton.clicked.connect(self.replaceAll)
-        layout.addWidget(self.replaceAllButton)
-
-        self.findField.setFocus()
-
-
-    def findNext(self):
-        text = self.findField.text()
-        if not self.editor.findFirst(text, False, True, False, True, True):
-            QMessageBox.information(self, "Find", "The text was not found.")
-
-    def replace(self):
-        find_text = self.findField.text()
-        if self.editor.findFirst(find_text, False, True, False, True, True):
-            replace_text = self.replaceField.text()
-            self.editor.replace(replace_text)
-
-    def replaceAll(self):
-        find_text = self.findField.text()
-        replace_text = self.replaceField.text()
-        self.editor.SendScintilla(self.editor.SCI_DOCUMENTSTART)
-        found = self.editor.findFirst(find_text, False, True, False, True, True)
-        while found:
-            self.editor.replace(replace_text)
-            found = self.editor.findNext()
-
-class SearchDialog(QDialog):
-    def __init__(self, editor, parent=None):
-        super().__init__(parent)
-        self.editor = editor  # Reference to the QsciScintilla editor
-        self.initUI()
-
-    def initUI(self):
-        self.setWindowTitle("Search")
-        layout = QVBoxLayout(self)
-
-        self.label = QLabel("Enter the text to search:", self)
-        layout.addWidget(self.label)
-
-        self.searchField = QLineEdit(self)
-        layout.addWidget(self.searchField)
-
-        self.searchButton = QPushButton("Find Next", self)
-        self.searchButton.clicked.connect(self.findNext)
-        layout.addWidget(self.searchButton)
-
-        self.searchField.setFocus()
-
-    def findNext(self):
-        text = self.searchField.text()
-        if not self.editor.findFirst(text, False, True, False, True, True):
-            # If nothing is found, wrap the search to the beginning
-            self.editor.SendScintilla(self.editor.SCI_DOCUMENTSTART)
-            if not self.editor.findFirst(text, False, True, False, True, True):
-                self.label.setText("Text not found.")
 
 class CustomQsciScintilla(QsciScintilla):
     def __init__(self, parent=None):
@@ -181,114 +19,61 @@ class CustomQsciScintilla(QsciScintilla):
         self.userListActivated.connect(self.onUserListActivated)
 
 
-
     def onUserListActivated(self, index, text):
         self.currentListItem = text
         self.currentListIndex = index
-        print(f"List Activated: {text} at index {index}")
 
+        # Get the cursor position
+        line, column = self.getCursorPosition()
+        pos = self.positionFromLineIndex(line, column)
+
+        # Find the position of the last period before the cursor
+        last_period_pos = self.SendScintilla(self.SCI_POSITIONBEFORE, pos)
+        while last_period_pos > 0 and chr(self.SendScintilla(self.SCI_GETCHARAT, last_period_pos)) != '.':
+            last_period_pos = self.SendScintilla(self.SCI_POSITIONBEFORE, last_period_pos)
+
+        # Check if the last character is a period and adjust the position
+        if last_period_pos >= 0 and chr(self.SendScintilla(self.SCI_GETCHARAT, last_period_pos)) == '.':
+            last_period_pos += 1
+
+        # Set the selection and replace the text
+        self.SendScintilla(self.SCI_SETSEL, last_period_pos, pos)
+        self.SendScintilla(self.SCI_REPLACESEL, 0, text.encode())
+
+        # Correctly position the cursor after insertion
+        new_pos = last_period_pos + len(text)
+        new_line, new_index = self.lineIndexFromPosition(new_pos)
+        self.setCursorPosition(new_line, new_index)
+
+        print(f"List Activated: {text} at index {index}, replaced from {last_period_pos} to {column}")
 
     def keyPressEvent(self, event: QKeyEvent):
-        try:
-            if self.isListActive():  # Assuming isListActive() checks if the autocomplete list is visible
-                if (event.key() == Qt.Key.Key_Tab) or (event.key() == Qt.Key.Key_Return):
-                    current_selection = self.currentListItem  # Use built-in function directly
-                    print(f"current selection: {current_selection}")
-                    if current_selection:
-                        self.insert(current_selection)  # Insert the selected text into the editor at the cursor
-                        self.SendScintilla(self.SCI_CANCEL)  # Cancel the list
-                        # Move cursor to the end of the inserted text
-                        new_line, new_index = self.getCursorPosition()
-                        self.setCursorPosition(new_line, new_index + len(current_selection))
-                        print(f"Inserted '{current_selection}' from list.")
-                        event.accept()
-                        return
-        except Exception as e:
-            print(f"Key press event error: {e}")
         super().keyPressEvent(event)
+        if self.isListActive():
+            if event.key() in [Qt.Key.Key_Tab, Qt.Key.Key_Return]:
+                if self.currentListItem:
+                    self.insert(self.currentListItem)
+                    self.SendScintilla(self.SCI_CANCEL)
+                    new_line, new_index = self.getCursorPosition()
+                    self.setCursorPosition(new_line, new_index + len(self.currentListItem))
+                    event.accept()
+                    return
 
         if event.text() == '.':
-            print("Dot pressed, fetching completions...")
-            code = self.text()
-            cursor_line, cursor_column = self.getCursorPosition()
-            cursor_line += 1  # Adjust for Jedi's 1-indexed lines
-            try:
-                script = jedi.Script(code=code, path=self.AContainer.filePath, environment=self.jedi_environment)
-                completions = script.complete(line=cursor_line, column=cursor_column)
-                completion_words = [comp.name for comp in completions]
-                self.AContainer.itemList = completion_words
-                # print(f"Completion words: {completion_words}")  # Debug print
+            QTimer.singleShot(100, self.triggerJediCompletion)  # Delay fetching completions
+
+    def triggerJediCompletion(self):
+        code = self.text()
+        cursor_line, cursor_column = self.getCursorPosition()
+        cursor_line += 1  # Adjust for Jedi's 1-indexed lines
+        try:
+            script = jedi.Script(code=code, path=self.AContainer.filePath, environment=self.jedi_environment)
+            completions = script.complete(line=cursor_line, column=cursor_column)
+            if completions:
+                self.AContainer.itemList = [comp.name for comp in completions]
                 self.showUserList(1, self.AContainer.itemList)
-            except Exception as e:
-                print(f"Error fetching completions: {e}")
-
-
-# class CustomQsciScintilla(QsciScintilla):
-#     def __init__(self, parent=None):
-#         super().__init__(parent)
-#         self.currentListItem = ""
-#
-#
-#     def onUserListActivated(self, index, text):
-#         """
-#         Slot that updates the current list item when an item in the user list is activated.
-#         """
-#         self.currentListItem = text
-#
-#     def getCurrentListItem(self):
-#         """
-#         Return the currently selected item in the user list.
-#         """
-#         return self.currentListItem
-#
-#     def keyPressEvent(self, event: QKeyEvent):
-#         try:
-#             if self.isListActive():  # Assuming isListActive() checks if the autocomplete list is visible
-#                 if event.key() in (Qt.Key.Key_Enter, Qt.Key.Key_Return, Qt.Key.Key_Tab):
-#                     # Get the currently selected item from the completion list
-#                     current_selection = self.getCurrentListItem()  # Implement this method to get the current selection
-#                     if current_selection:
-#                         self.insert(current_selection)  # Insert the selected text into the editor at the cursor
-#                         # self.hideUserList()  # Hide the completion list
-#                         event.accept()  # Consume the event to prevent further processing
-#                         return
-#         except Exception as e:
-#             print(e)
-#             # Default handling if not processing Tab or Enter for autocomplete
-#         super().keyPressEvent(event)
-#
-#         if event.text() == '.':
-#             print("Dot pressed, fetching completions...")
-#
-#             # Get current code from the editor and cursor position
-#             code = self.text()
-#             cursor_line, cursor_column = self.getCursorPosition()
-#             cursor_line += 1  # Adjust for Jedi's 1-indexed lines
-#
-#             # Check if Jedi environment is configured properly
-#             if not hasattr(self, 'jedi_environment') or self.jedi_environment is None:
-#                 print("Jedi environment is not configured.")
-#                 return  # Early exit if Jedi not configured
-#
-#             # Using Jedi to get completions at the current cursor position
-#             try:
-#                 script = jedi.Script(code=code, path=self.AContainer.filePath, environment=self.jedi_environment)
-#                 completions = script.complete(line=cursor_line, column=cursor_column)
-#                 completion_words = [comp.name for comp in completions]
-#                 print(f"Completion words: {completion_words}")
-#
-#                 # Update the editor's completion list directly
-#                 self.AContainer.itemList = completion_words
-#
-#                 # Print items for debugging purposes
-#                 for item in self.AContainer.itemList:
-#                     print(item)
-#
-#                 # Show completion list to the user
-#                 self.showUserList(1, self.AContainer.itemList)
-#
-#             except Exception as e:
-#                 print(f"An error occurred while fetching completions: {e}")
+        except Exception as e:
+            print(f"Error fetching completions: {e}")
 
 
 class QScintillaEditorWidget(QWidget):
@@ -340,12 +125,7 @@ class QScintillaEditorWidget(QWidget):
             self.editor.setAutoCompletionThreshold(1)  # Adjust if needed
             self.editor.setAutoCompletionWordSeparators(['.'])  # Trigger on dot
 
-            # if self.editor.isListActive():
-            #     print("List is already active, canceling...")
-            #     self.editor.cancelList()
-
             print("Auto-completion list prepared and should appear based on threshold settings.")
-
 
 
     def setupUi(self):
@@ -356,13 +136,9 @@ class QScintillaEditorWidget(QWidget):
         self.editor = CustomQsciScintilla()
         layout.addWidget(self.editor)
 
-        # lexer = PythonLexer()
-        # self.editor.setLexer(lexer)
-
         # Editor font
         font = QFont("Consolas", 10)
         self.editor.setFont(font)
-        # lexer.setFont(font)
 
         # Enable line numbers in the left margin
         self.editor.setMarginType(0, QsciScintilla.MarginType.NumberMargin)
@@ -439,8 +215,6 @@ class QScintillaEditorWidget(QWidget):
         font = QFont(self._themes["font"], self._themes["font_size"])
         self.editor.setFont(font)
         font = QFont(self._themes["font"], self._themes["font_size"])
-        # Set the brace matching mode
-        # self.editor.setBraceMatching(QsciScintilla.BraceMatch.Strict)
 
         # Set the colors for matching braces
         self.editor.setMatchedBraceBackgroundColor(QColor("#006600"))
@@ -550,30 +324,7 @@ class QScintillaEditorWidget(QWidget):
 
 
 
-class HotkeysDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Hotkeys")
-        self.setupUi()
 
-    def setupUi(self):
-        layout = QVBoxLayout(self)
-
-        # Example hotkeys, replace with your application's hotkeys
-        hotkeys = [
-            ("Ctrl+N", "New Tab"),
-            ("Ctrl+S", "Save File"),
-            ("Ctrl+W", "Close Tab"),
-            ("Ctrl+F", "Find"),
-            ("Ctrl+R", "Replace"),
-        ]
-
-        for key, action in hotkeys:
-            layout.addWidget(QLabel(f"{key}: {action}"))
-
-        closeButton = QPushButton("Close")
-        closeButton.clicked.connect(self.close)
-        layout.addWidget(closeButton)
 
 class EditorWidget(QWidget):
 
@@ -784,34 +535,6 @@ class EditorWidget(QWidget):
 
         except Exception as e:
             print(f"An error occurred while fetching completions: {e}")
-    # def handle_text_changed(self, editor):
-    #     # Check if the Jedi environment is configured
-    #     if not hasattr(editor, 'jedi_environment') or editor.jedi_environment is None:
-    #         print("Jedi environment is not configured.")
-    #         return  # Early exit if Jedi not configured
-    #
-    #     # Retrieve code and cursor position from the editor
-    #     code = editor.text()
-    #     cursor_line, cursor_column = editor.getCursorPosition()
-    #     cursor_line += 1  # Adjust for Jedi's 1-indexed lines
-    #
-    #     # Create an instance of SignalEmitter (handles emitting of completion and error signals)
-    #     signalEmitter = SignalEmitter()
-    #     # Connect fetched completions to handleCompletionsFetched via a queued connection to ensure thread safety
-    #     signalEmitter.completionsFetched.connect(self.handleCompletionsFetched, type=Qt.ConnectionType.QueuedConnection)
-    #     # Connect errors to handleErrorOccurred similarly
-    #     signalEmitter.errorOccurred.connect(self.handleErrorOccurred)
-    #
-    #     # Prepare the completion worker with necessary data
-    #     worker = CompletionWorker(code=code, cursor_pos=(cursor_line, cursor_column),
-    #                               environment=editor.jedi_environment, signalEmitter=signalEmitter)
-    #
-    #     # Set the current editor as active editor
-    #     self.active_editor = editor
-    #     # Keep a reference to the worker to avoid it being garbage collected
-    #     self.active_workers.append(worker)
-    #     # Start the worker in a separate thread for asynchronous operation
-    #     QThreadPool.globalInstance().start(worker)
 
     def handleCompletionsFetched(self, result):
         self.completionResult = result  # Corrected attribute name for storing the result
@@ -822,23 +545,6 @@ class EditorWidget(QWidget):
             return
         editor.AContainer.showUserListSignal.emit(1, result)  # Use the correct userListId if needed
 
-        # self.processCompletionResult(result)  # Directly call the processing method
-
-
-    # def debouncedHandleCompletionsFetched(self):
-    #     print("Debounced: handleCompletionsFetched")
-    #     if self.pendingCompletionResult:
-    #         result = self.pendingCompletionResult
-    #         auto_complete_list = result
-    #         # editor = result[1]
-    #         editor = self.active_editor
-    #         if result:
-    #             pass
-    #             print(len(auto_complete_list))
-    #             editor.showUserList(1, auto_complete_list)
-    #             editor.autoCompleteFromAll()
-    #             editor.setAutoCompletionThreshold(10)
-    #         self.pendingCompletionResult = None  # Reset pending result
 
     def handleErrorOccurred(self, result):
         print("signal works: handleCompletionsFetched")
@@ -1028,33 +734,6 @@ class EditorWidget(QWidget):
         dialog = AboutDialog(self)
         dialog.show()
 
-class AboutDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("About PyEasyEdit")
-        self.setFixedSize(400, 300)  # Adjust size as needed
-        layout = QVBoxLayout()
-
-        # Display the image
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        print(f"current dir: {base_dir}")
-        image_path = os.path.join(base_dir, './images/easyedit.png')
-
-        self.imageLabel = QLabel(self)
-        pixmap = QPixmap(image_path)
-        self.imageLabel.setPixmap(pixmap)
-        self.imageLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        layout.addWidget(self.imageLabel)
-
-        # TextBrowser for displaying link
-        self.textBrowser = QTextBrowser(self)
-        self.textBrowser.setOpenExternalLinks(True)  # Allow opening links in external browser
-        self.textBrowser.setText('''PyEasyEdit - <a href="https://github.com/scottpeterman/pyeasyedit">https://github.com/scottpeterman/pyeasyedit</a>''')
-        self.textBrowser.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.textBrowser)
-
-        self.setLayout(layout)
 
 def main():
     app = QApplication(sys.argv)

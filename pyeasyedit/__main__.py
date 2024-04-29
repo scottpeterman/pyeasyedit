@@ -7,7 +7,7 @@ from PyQt6.QtGui import QAction, QShortcut, QKeySequence, QPixmap, QKeyEvent
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QMessageBox, QFileDialog
 from PyQt6.Qsci import QsciScintilla, QsciAPIs
 from pyeasyedit.LexersCustom import *
-from pyeasylib import AboutDialog, get_config_directory, get_imported_modules, LEXER_MAP_MENU, load_recent_files, \
+from pyeasyedit.pyeasylib import AboutDialog, get_config_directory, get_imported_modules, LEXER_MAP_MENU, load_recent_files, \
     save_recent_files, HotkeysDialog, SearchDialog, ReplaceDialog
 
 
@@ -294,9 +294,12 @@ class QScintillaEditorWidget(QWidget):
 
     def saveFile(self):
         if self.current_file_path:
-            return self._saveToFile(self.current_file_path)
+            success = self._saveToFile(self.current_file_path)
+            if success:
+                self.fileSaved.emit(self.current_file_path)  # Ensure this is emitted
+            return success, self.current_file_path
         else:
-            return self.saveFileAs()
+            return self.saveFileAs()  # This should handle new files
 
     def _saveToFile(self, filePath):
         try:
@@ -309,18 +312,23 @@ class QScintillaEditorWidget(QWidget):
             return True
         except Exception as e:
             QMessageBox.critical(self, "Error Saving File", "An error occurred while saving the file:\n" + str(e))
-            return False
+            return False, filePath
 
     def saveFileAs(self, filePath=None):
-        if not filePath:
-            filePath, _ = QFileDialog.getSaveFileName(self, "Save File As", self.defaultFolderPath, "All Files (*)")
-        if filePath:
-            success = self._saveToFile(filePath)
-            if success:
-                self.current_file_path = filePath
-                self.editor.setModified(False)
-                return True, filePath  # Indicate success and provide the file path
-        return False, None  # Indicate failure
+        try:
+            if not filePath:
+                filePath, _ = QFileDialog.getSaveFileName(self, "Save File As", self.defaultFolderPath, "All Files (*)")
+            if filePath:
+                success = self._saveToFile(filePath)
+                if success:
+                    self.current_file_path = filePath
+                    self.editor.setModified(False)
+                    self.fileSaved.emit(filePath)  # Ensure this is emitted, it updates the tab title
+                    return True, filePath
+        except Exception as e:
+            QMessageBox.critical(self, "Error Saving File", "An error occurred while saving the file:\n" + str(e))
+            return False, filePath
+        return False
 
 
 
@@ -451,6 +459,14 @@ class EditorWidget(QWidget):
         self.addAction(closeTabAction)
         self.populateRecentFilesMenu()
 
+    def populateRecentFilesMenu(self):
+        self.recentFilesMenu.clear()
+        recent_files = load_recent_files()
+        for filePath in recent_files:
+            action = QAction(os.path.basename(filePath), self)
+            action.triggered.connect(lambda checked, path=filePath: self.openFileAtPath(path))
+            self.recentFilesMenu.addAction(action)
+
     def changeLexer(self, lexer_class):
         current_editor_widget = self.getCurrentEditorWidget()
         if current_editor_widget:
@@ -475,6 +491,8 @@ class EditorWidget(QWidget):
 
     def newTab(self, filePath=None):
         editorWidget = QScintillaEditorWidget(self.defaultFolderPath())
+        editorWidget.fileSaved.connect(self.updateTabText)  # This connection should handle both Save and Save As
+
         editor = editorWidget.editor
         editor.AContainer = editorWidget
         # Editor setup (auto-completion, auto-indent, etc.)
@@ -628,9 +646,11 @@ class EditorWidget(QWidget):
         self.tabWidget.setTabText(self.tabWidget.currentIndex(), os.path.basename(filePath))
 
     def saveFile(self):
-        editor = self.tabWidget.currentWidget()
-        if editor:
-            editor.saveFile()
+        editorWidget = self.getCurrentEditorWidget()  # Ensure you are retrieving the editor widget
+        if editorWidget:
+            success, filePath = editorWidget.saveFile()  # Assuming saveFile returns a success flag and the file path
+            if success:
+                self.updateRecentFiles(filePath)  # Update the recent files list with the new path
 
     def getCurrentEditorWidget(self):
         """
@@ -641,36 +661,39 @@ class EditorWidget(QWidget):
         return currentEditor
 
     def saveFileAs(self):
-        editorWidget = self.getCurrentEditorWidget()
-        if editorWidget:
-            success, filePath = editorWidget.saveFileAs()  # Adjusted to capture return values
-            if success and filePath:
-                # Update the tab title
-                filename = os.path.basename(filePath)
-                tabIndex = self.tabWidget.currentIndex()
-                self.tabWidget.setTabText(tabIndex, filename)
-                self.updateRecentFiles(filePath)  # Update the list of recent files
+        try:
+            editorWidget = self.getCurrentEditorWidget()
+            if editorWidget:
+                success, filePath = editorWidget.saveFileAs()  # Adjusted to capture return values
+                if success and filePath:
+                    # Update the tab title
+                    filename = os.path.basename(filePath)
+                    tabIndex = self.tabWidget.currentIndex()
+                    self.tabWidget.setTabText(tabIndex, filename)
+                    self.updateRecentFiles(filePath)  # Update the list of recent files
 
-                return True
+                    return True
+        except Exception as e:
+            print(e)
         return False
 
-    def populateRecentFilesMenu(self):
-        self.recentFilesMenu.clear()
-        recent_files = load_recent_files()  # Load recent files from registry
-        for filePath in recent_files:
-            action = self.recentFilesMenu.addAction(os.path.basename(filePath))
-            action.triggered.connect(lambda checked, path=filePath: self.openFileAtPath(path))
+
+        # self.recentFilesMenu.clear()
+        # recent_files = load_recent_files()  # Load recent files from registry
+        # for filePath in recent_files:
+        #     action = self.recentFilesMenu.addAction(os.path.basename(filePath))
+        #     action.triggered.connect(lambda checked, path=filePath: self.openFileAtPath(path))
 
     def openFileAtPath(self, filePath):
         self.loadFileIntoEditor(filePath)
 
-    def updateRecentFiles(self, filePath):
+    def updateRecentFiles(self, filePath, remove=False):
         recent_files = load_recent_files()
-        if filePath in recent_files:
+        if remove and filePath in recent_files:
             recent_files.remove(filePath)
-        recent_files.insert(0, filePath)
-        # Trim the list to the last N files, e.g., 5
-        recent_files = recent_files[:10]
+        elif filePath not in recent_files:
+            recent_files.insert(0, filePath)
+            recent_files = recent_files[:10]
         save_recent_files(recent_files)
         self.populateRecentFilesMenu()
 

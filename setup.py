@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="pyeasyedit",
-    version="0.1.20",
+    version="0.1.22",
     description="A PyQt6 multi-tabbed editor based on QScintilla, includes limited IDE functions via Jedi",
     long_description=open('README.md').read(),
     long_description_content_type="text/markdown",
